@@ -1,0 +1,5 @@
+node_modules/
+# CocoIndex Code (ccc)
+/.cocoindex_code/
+.pi/
+ai-slop-report.json

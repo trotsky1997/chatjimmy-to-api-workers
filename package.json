@@ -1,0 +1,25 @@
+{
+	"name": "chatjimmy-to-api-workers",
+	"description": "ChatJimmy OpenAI-compatible Worker plus Pi model-provider extension",
+	"private": true,
+	"type": "module",
+	"keywords": [
+		"pi-package"
+	],
+	"peerDependencies": {
+		"@mariozechner/pi-ai": "*",
+		"@mariozechner/pi-coding-agent": "*"
+	},
+	"devDependencies": {
+		"@mariozechner/pi-ai": "*",
+		"@mariozechner/pi-coding-agent": "*"
+	},
+	"pi": {
+		"extensions": [
+			"./extensions/chatjimmy-provider/index.ts"
+		]
+	},
+	"dependencies": {
+		"jsonrepair": "^3.13.1"
+	}
+}
