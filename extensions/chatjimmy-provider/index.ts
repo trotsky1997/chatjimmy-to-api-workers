@@ -16,7 +16,7 @@ const DEFAULT_MODEL_ID = "llama3.1-8B";
 const DEFAULT_CONTEXT_WINDOW = 32768;
 const DEFAULT_MAX_TOKENS = 8192;
 const DEFAULT_SYSTEM_PROMPT_MODE = "compact";
-const DEFAULT_TOOL_MODE = "compact";
+const DEFAULT_TOOL_MODE = "smart";
 const COMPACT_SYSTEM_PROMPT = [
 	"You are ChatJimmy running inside pi, a terminal coding assistant.",
 	"Answer the user's request directly and concisely.",
@@ -145,12 +145,56 @@ function normalizeToolMode(): string {
 	return (readEnv("CHATJIMMY_TOOL_MODE") || DEFAULT_TOOL_MODE).toLowerCase();
 }
 
+function getLastUserText(context: Context): string {
+	for (let i = context.messages.length - 1; i >= 0; i--) {
+		const message = context.messages[i];
+		if (message.role === "user")
+			return extractTextContent(message.content).trim();
+	}
+	return "";
+}
+
+function hasToolHistory(context: Context): boolean {
+	return context.messages.some((message) => {
+		if (message.role === "toolResult") return true;
+		if (message.role !== "assistant") return false;
+		return message.content.some((block) => block.type === "toolCall");
+	});
+}
+
+function shouldExposeTools(context: Context): boolean {
+	if (hasToolHistory(context)) return true;
+
+	const text = getLastUserText(context);
+	if (!text) return false;
+
+	if (
+		/^(hi|hello|hey|你好|您好|嗨|在吗|早上好|中午好|晚上好)[!！,.。?？ ]*$/i.test(
+			text,
+		)
+	) {
+		return false;
+	}
+
+	if (
+		/(\b(file|files|read|write|edit|patch|code|coding|refactor|implement|debug|bug|test|build|run|command|bash|shell|search|grep|directory|folder|path|function|class|module|repository|repo|git|fix|review|analyze|lsp)\b|代码|文件|目录|路径|命令|运行|测试|修复|修改|编辑|搜索|查找|实现|重构|函数|类|模块|仓库|分析|审查|补丁|读|写)/i.test(
+			text,
+		)
+	) {
+		return true;
+	}
+
+	if (text.length <= 80) return false;
+	return true;
+}
+
 function selectTools(tools?: Context["tools"]): Context["tools"] {
 	if (!tools || tools.length === 0) return undefined;
 
 	const mode = normalizeToolMode();
 	if (mode === "none") return undefined;
 	if (mode === "all") return tools;
+	if (mode === "smart") return tools;
 
 	const filtered = tools.filter((tool) =>
 		COMPACT_TOOL_ALLOWLIST.has(tool.name),
@@ -159,8 +203,19 @@ function selectTools(tools?: Context["tools"]): Context["tools"] {
 	return tools.slice(0, 6);
 }
 
-function buildToolDefinitions(tools?: Context["tools"]) {
-	const selectedTools = selectTools(tools);
+function buildToolDefinitions(context: Context) {
+	if (!shouldExposeTools(context)) return undefined;
+
+	let selectedTools = selectTools(context.tools);
+	if (normalizeToolMode() === "smart") {
+		selectedTools = context.tools?.filter((tool) =>
+			COMPACT_TOOL_ALLOWLIST.has(tool.name),
+		);
+		if (!selectedTools || selectedTools.length === 0) {
+			selectedTools = context.tools?.slice(0, 6);
+		}
+	}
+
 	if (!selectedTools || selectedTools.length === 0) return undefined;
 
 	return selectedTools.map((tool) => ({
@@ -258,7 +313,7 @@ function convertMessages(model: Model<Api>, context: Context) {
 		model: model.id,
 		stream: true,
 		messages,
-		tools: buildToolDefinitions(context.tools),
+		tools: buildToolDefinitions(context),
 	};
 }
 
