@@ -41,6 +41,7 @@ export CHATJIMMY_MODELS="llama3.1-8B,qwen2.5-coder"
 export CHATJIMMY_CONTEXT_WINDOW="32768"
 export CHATJIMMY_MAX_TOKENS="8192"
 export CHATJIMMY_SYSTEM_PROMPT_MODE="compact"
+export CHATJIMMY_TOOL_MODE="smart"
 ```
 
 Notes:
@@ -51,8 +52,13 @@ Notes:
   Pi's very large default coding prompt with a short ChatJimmy-friendly
   system prompt. This avoids the empty-response issue seen with the full
   prompt.
+- `CHATJIMMY_TOOL_MODE` defaults to `smart`, which hides tools for short
+  conversational prompts like `你好` and keeps a compact allowlist for
+  coding-style requests.
 - Set `CHATJIMMY_SYSTEM_PROMPT_MODE=passthrough` if you want to send
   Pi's original system prompt unchanged.
+- Set `CHATJIMMY_TOOL_MODE=all` to always expose tools, or
+  `CHATJIMMY_TOOL_MODE=none` to disable tools entirely.
 - Set `CHATJIMMY_EXTRA_SYSTEM_PROMPT` to append custom instructions to
   the compact prompt.
 - `_worker.js` is now optional. Keep it only if you also want an
