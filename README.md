@@ -40,12 +40,21 @@ export CHATJIMMY_MODEL="llama3.1-8B"
 export CHATJIMMY_MODELS="llama3.1-8B,qwen2.5-coder"
 export CHATJIMMY_CONTEXT_WINDOW="32768"
 export CHATJIMMY_MAX_TOKENS="8192"
+export CHATJIMMY_SYSTEM_PROMPT_MODE="compact"
 ```
 
 Notes:
 
 - `CHATJIMMY_MODELS` overrides `CHATJIMMY_MODEL` and accepts a
   comma-separated list.
+- `CHATJIMMY_SYSTEM_PROMPT_MODE` defaults to `compact`, which replaces
+  Pi's very large default coding prompt with a short ChatJimmy-friendly
+  system prompt. This avoids the empty-response issue seen with the full
+  prompt.
+- Set `CHATJIMMY_SYSTEM_PROMPT_MODE=passthrough` if you want to send
+  Pi's original system prompt unchanged.
+- Set `CHATJIMMY_EXTRA_SYSTEM_PROMPT` to append custom instructions to
+  the compact prompt.
 - `_worker.js` is now optional. Keep it only if you also want an
   OpenAI-compatible HTTP bridge for other clients.
 

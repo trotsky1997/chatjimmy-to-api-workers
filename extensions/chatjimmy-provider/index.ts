@@ -15,6 +15,13 @@ const DEFAULT_CHATJIMMY_API_URL = "https://chatjimmy.ai/api/chat";
 const DEFAULT_MODEL_ID = "llama3.1-8B";
 const DEFAULT_CONTEXT_WINDOW = 32768;
 const DEFAULT_MAX_TOKENS = 8192;
+const DEFAULT_SYSTEM_PROMPT_MODE = "compact";
+const COMPACT_SYSTEM_PROMPT = [
+	"You are ChatJimmy running inside pi, a terminal coding assistant.",
+	"Answer the user's request directly and concisely.",
+	"Use tools only when they are actually needed.",
+	"When tool definitions are provided, follow the proxy shim instructions exactly.",
+].join(" ");
 const ENV =
 	(globalThis as { process?: { env?: Record<string, string | undefined> } })
 		.process?.env || {};
@@ -58,6 +65,26 @@ function formatModelName(id: string): string {
 	return `ChatJimmy ${id}`;
 }
 
+function normalizeSystemPrompt(systemPrompt?: string): string | undefined {
+	const mode = (
+		readEnv("CHATJIMMY_SYSTEM_PROMPT_MODE") || DEFAULT_SYSTEM_PROMPT_MODE
+	).toLowerCase();
+	const extra = readEnv("CHATJIMMY_EXTRA_SYSTEM_PROMPT");
+
+	if (mode === "passthrough") {
+		if (systemPrompt && extra) return `${systemPrompt}\n\n${extra}`;
+		return systemPrompt || extra;
+	}
+
+	if (mode === "none") {
+		return extra;
+	}
+
+	var compact = COMPACT_SYSTEM_PROMPT;
+	if (extra) compact += `\n\n${extra}`;
+	return compact;
+}
+
 function extractTextContent(
 	content: string | Array<{ type: string; text?: string }>,
 ): string {
@@ -74,9 +101,10 @@ function extractTextContent(
 
 function convertMessages(model: Model<Api>, context: Context) {
 	const messages: Array<Record<string, unknown>> = [];
+	const systemPrompt = normalizeSystemPrompt(context.systemPrompt);
 
-	if (context.systemPrompt) {
-		messages.push({ role: "system", content: context.systemPrompt });
+	if (systemPrompt) {
+		messages.push({ role: "system", content: systemPrompt });
 	}
 
 	for (const message of context.messages) {
