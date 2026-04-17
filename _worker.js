@@ -218,6 +218,7 @@ function buildToolInstruction(toolDefs, toolChoice, parallelToolCalls) {
 		JSON.stringify(toolDefs),
 		"If you need tools, respond with only this exact wrapper and valid JSON:",
 		'<tool_calls>{"tool_calls":[{"id":"call_x","name":"tool_name","arguments":{}}]}</tool_calls>',
+		"Never return an empty <tool_calls> block. If no tool is needed, answer normally.",
 		"Do not wrap the tool call block in markdown.",
 		"When tool results appear later in the conversation, use them to answer normally unless another tool call is necessary.",
 	].join("\n");
@@ -263,12 +264,40 @@ function serializeToolCallsForUpstream(toolCalls) {
 	);
 }
 
+function detectToolResultStatus(content) {
+	var text = stringifyContent(content).trim();
+	if (!text) return "empty";
+
+	if (
+		/(^|\b)(error|enoent|eacces|eperm|traceback|exception|failed)(\b|:)/i.test(
+			text,
+		) ||
+		/no such file or directory|not found|permission denied|command exited with code|invalid /i.test(
+			text,
+		)
+	) {
+		return "error";
+	}
+
+	return "success";
+}
+
 function buildToolResultTranscript(msg) {
+	var content = stringifyContent(msg.content).trim();
+	var status = detectToolResultStatus(msg.content);
+	var guidance =
+		status === "error"
+			? "The tool failed. Briefly explain the failure and either retry with corrected arguments or ask the user for the missing input."
+			: "Use this result to continue helping the user.";
+
 	return [
-		"Tool result:",
+		"Tool result for your previous tool call. This is not a new user message.",
 		"tool_call_id: " + (msg.tool_call_id || ""),
 		msg.name ? "tool_name: " + msg.name : "",
-		stringifyContent(msg.content),
+		"tool_status: " + status,
+		guidance,
+		"tool_output:",
+		content || "(empty tool output)",
 	]
 		.filter(Boolean)
 		.join("\n");
@@ -341,12 +370,12 @@ function parseToolCalls(raw) {
 		if (!parsed) throw new Error("Model returned malformed <tool_calls> JSON");
 	}
 
-	if (
-		!parsed ||
-		!Array.isArray(parsed.tool_calls) ||
-		!parsed.tool_calls.length
-	) {
-		throw new Error("Model returned an empty <tool_calls> block");
+	if (!parsed || !Array.isArray(parsed.tool_calls)) {
+		throw new Error("Model returned an invalid <tool_calls> block");
+	}
+
+	if (!parsed.tool_calls.length) {
+		return null;
 	}
 
 	return parsed.tool_calls.map(function (call, index) {
