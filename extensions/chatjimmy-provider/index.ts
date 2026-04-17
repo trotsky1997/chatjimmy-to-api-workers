@@ -16,27 +16,14 @@ const DEFAULT_MODEL_ID = "llama3.1-8B";
 const DEFAULT_CONTEXT_WINDOW = 32768;
 const DEFAULT_MAX_TOKENS = 8192;
 const DEFAULT_SYSTEM_PROMPT_MODE = "compact";
-const DEFAULT_TOOL_MODE = "smart";
+const DEFAULT_TOOL_MODE = "basic";
 const COMPACT_SYSTEM_PROMPT = [
 	"You are ChatJimmy running inside pi, a terminal coding assistant.",
 	"Answer the user's request directly and concisely.",
 	"Use tools only when they are actually needed.",
 	"When tool definitions are provided, follow the proxy shim instructions exactly.",
 ].join(" ");
-const COMPACT_TOOL_ALLOWLIST = new Set([
-	"read",
-	"bash",
-	"edit",
-	"write",
-	"search",
-	"web_search",
-	"webfetch",
-	"apply_patch",
-	"AskUserQuestion",
-	"TodoWrite",
-	"process",
-	"lsp",
-]);
+const BASIC_TOOL_ALLOWLIST = new Set(["read", "bash", "edit", "write"]);
 const ENV =
 	(globalThis as { process?: { env?: Record<string, string | undefined> } })
 		.process?.env || {};
@@ -142,7 +129,10 @@ function summarizeSchema(schema: unknown, depth = 1): unknown {
 }
 
 function normalizeToolMode(): string {
-	return (readEnv("CHATJIMMY_TOOL_MODE") || DEFAULT_TOOL_MODE).toLowerCase();
+	const mode = (
+		readEnv("CHATJIMMY_TOOL_MODE") || DEFAULT_TOOL_MODE
+	).toLowerCase();
+	return mode === "smart" ? "basic" : mode;
 }
 
 function getLastUserText(context: Context): string {
@@ -194,28 +184,14 @@ function selectTools(tools?: Context["tools"]): Context["tools"] {
 	const mode = normalizeToolMode();
 	if (mode === "none") return undefined;
 	if (mode === "all") return tools;
-	if (mode === "smart") return tools;
 
-	const filtered = tools.filter((tool) =>
-		COMPACT_TOOL_ALLOWLIST.has(tool.name),
-	);
-	if (filtered.length > 0) return filtered;
-	return tools.slice(0, 6);
+	return tools.filter((tool) => BASIC_TOOL_ALLOWLIST.has(tool.name));
 }
 
 function buildToolDefinitions(context: Context) {
 	if (!shouldExposeTools(context)) return undefined;
 
-	let selectedTools = selectTools(context.tools);
-	if (normalizeToolMode() === "smart") {
-		selectedTools = context.tools?.filter((tool) =>
-			COMPACT_TOOL_ALLOWLIST.has(tool.name),
-		);
-		if (!selectedTools || selectedTools.length === 0) {
-			selectedTools = context.tools?.slice(0, 6);
-		}
-	}
-
+	const selectedTools = selectTools(context.tools);
 	if (!selectedTools || selectedTools.length === 0) return undefined;
 
 	return selectedTools.map((tool) => ({
