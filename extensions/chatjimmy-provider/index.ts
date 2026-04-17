@@ -16,12 +16,27 @@ const DEFAULT_MODEL_ID = "llama3.1-8B";
 const DEFAULT_CONTEXT_WINDOW = 32768;
 const DEFAULT_MAX_TOKENS = 8192;
 const DEFAULT_SYSTEM_PROMPT_MODE = "compact";
+const DEFAULT_TOOL_MODE = "compact";
 const COMPACT_SYSTEM_PROMPT = [
 	"You are ChatJimmy running inside pi, a terminal coding assistant.",
 	"Answer the user's request directly and concisely.",
 	"Use tools only when they are actually needed.",
 	"When tool definitions are provided, follow the proxy shim instructions exactly.",
 ].join(" ");
+const COMPACT_TOOL_ALLOWLIST = new Set([
+	"read",
+	"bash",
+	"edit",
+	"write",
+	"search",
+	"web_search",
+	"webfetch",
+	"apply_patch",
+	"AskUserQuestion",
+	"TodoWrite",
+	"process",
+	"lsp",
+]);
 const ENV =
 	(globalThis as { process?: { env?: Record<string, string | undefined> } })
 		.process?.env || {};
@@ -85,6 +100,79 @@ function normalizeSystemPrompt(systemPrompt?: string): string | undefined {
 	return compact;
 }
 
+function shortenText(text: string | undefined, maxLength: number): string {
+	if (!text) return "";
+	const normalized = text.replace(/\s+/g, " ").trim();
+	if (normalized.length <= maxLength) return normalized;
+	return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
+}
+
+function summarizeSchema(schema: unknown, depth = 1): unknown {
+	if (!schema || typeof schema !== "object") return { type: "object" };
+
+	const input = schema as {
+		type?: unknown;
+		enum?: unknown;
+		required?: unknown;
+		properties?: Record<string, unknown>;
+		items?: unknown;
+	};
+	const result: Record<string, unknown> = {};
+
+	if (typeof input.type === "string") result.type = input.type;
+	if (Array.isArray(input.enum)) result.enum = input.enum.slice(0, 8);
+	if (Array.isArray(input.required) && input.required.length > 0) {
+		result.required = input.required.slice(0, 20);
+	}
+
+	if (depth > 0 && input.properties && typeof input.properties === "object") {
+		const properties: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(input.properties)) {
+			properties[key] = summarizeSchema(value, depth - 1);
+		}
+		result.properties = properties;
+	}
+
+	if (depth > 0 && input.items) {
+		result.items = summarizeSchema(input.items, depth - 1);
+	}
+
+	if (Object.keys(result).length === 0) return { type: "object" };
+	return result;
+}
+
+function normalizeToolMode(): string {
+	return (readEnv("CHATJIMMY_TOOL_MODE") || DEFAULT_TOOL_MODE).toLowerCase();
+}
+
+function selectTools(tools?: Context["tools"]): Context["tools"] {
+	if (!tools || tools.length === 0) return undefined;
+
+	const mode = normalizeToolMode();
+	if (mode === "none") return undefined;
+	if (mode === "all") return tools;
+
+	const filtered = tools.filter((tool) =>
+		COMPACT_TOOL_ALLOWLIST.has(tool.name),
+	);
+	if (filtered.length > 0) return filtered;
+	return tools.slice(0, 6);
+}
+
+function buildToolDefinitions(tools?: Context["tools"]) {
+	const selectedTools = selectTools(tools);
+	if (!selectedTools || selectedTools.length === 0) return undefined;
+
+	return selectedTools.map((tool) => ({
+		type: "function",
+		function: {
+			name: tool.name,
+			description: shortenText(tool.description, 120),
+			parameters: summarizeSchema(tool.parameters, 1),
+		},
+	}));
+}
+
 function extractTextContent(
 	content: string | Array<{ type: string; text?: string }>,
 ): string {
@@ -118,25 +206,31 @@ function convertMessages(model: Model<Api>, context: Context) {
 
 		if (message.role === "assistant") {
 			const text = message.content
-				.filter((block: { type: string }) => block.type === "text")
-				.map((block: { text: string }) => block.text)
+				.filter(
+					(block): block is { type: "text"; text: string } =>
+						block.type === "text",
+				)
+				.map((block) => block.text)
 				.join("\n");
 			const toolCalls = message.content
-				.filter((block: { type: string }) => block.type === "toolCall")
-				.map(
-					(block: {
+				.filter(
+					(
+						block,
+					): block is {
+						type: "toolCall";
 						id: string;
 						name: string;
 						arguments: Record<string, unknown>;
-					}) => ({
-						id: block.id,
-						type: "function",
-						function: {
-							name: block.name,
-							arguments: JSON.stringify(block.arguments || {}),
-						},
-					}),
-				);
+					} => block.type === "toolCall",
+				)
+				.map((block) => ({
+					id: block.id,
+					type: "function",
+					function: {
+						name: block.name,
+						arguments: JSON.stringify(block.arguments || {}),
+					},
+				}));
 
 			if (toolCalls.length > 0) {
 				messages.push({
@@ -164,16 +258,7 @@ function convertMessages(model: Model<Api>, context: Context) {
 		model: model.id,
 		stream: true,
 		messages,
-		tools: context.tools?.map(
-			(tool: { name: string; description: string; parameters: unknown }) => ({
-				type: "function",
-				function: {
-					name: tool.name,
-					description: tool.description,
-					parameters: tool.parameters,
-				},
-			}),
-		),
+		tools: buildToolDefinitions(context.tools),
 	};
 }
 
