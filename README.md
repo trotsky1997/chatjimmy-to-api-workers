@@ -55,6 +55,9 @@ Notes:
 - `CHATJIMMY_TOOL_MODE` defaults to `basic`, which hides tools for short
   conversational prompts like `你好` and keeps only the basic tool
   allowlist (`read`, `bash`, `edit`, `write`) for coding-style requests.
+- `_worker.js` also respects `CHATJIMMY_TOOL_MODE`; in `basic` mode it
+  filters incoming OpenAI `tools` to the same `read` / `bash` / `edit` /
+  `write` allowlist before proxying them to ChatJimmy.
 - Set `CHATJIMMY_SYSTEM_PROMPT_MODE=passthrough` if you want to send
   Pi's original system prompt unchanged.
 - Set `CHATJIMMY_TOOL_MODE=all` to always expose tools, or

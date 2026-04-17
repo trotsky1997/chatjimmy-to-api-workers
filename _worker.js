@@ -5,12 +5,16 @@
  * Env Variables:
  *   API_KEY  - Bearer token (空 = 不鉴权)
  *   DEBUG    - "true" 开启日志
+ *   CHATJIMMY_API_URL   - override upstream ChatJimmy API URL
+ *   CHATJIMMY_TOOL_MODE - basic|all|none (smart is accepted as a basic alias)
  */
 
 import { jsonrepair } from "jsonrepair";
 
 const CHATJIMMY_API_URL = "https://chatjimmy.ai/api/chat";
 const DEFAULT_MODEL = "llama3.1-8B";
+const DEFAULT_TOOL_MODE = "basic";
+const BASIC_TOOL_ALLOWLIST = new Set(["read", "bash", "edit", "write"]);
 const CHUNK_SIZE = 32;
 const UPSTREAM_TIMEOUT_MS = 15000;
 
@@ -142,6 +146,12 @@ function stringifyContent(content) {
 	}
 }
 
+function normalizeToolMode(toolMode) {
+	var mode = typeof toolMode === "string" ? toolMode.trim().toLowerCase() : "";
+	if (!mode) mode = DEFAULT_TOOL_MODE;
+	return mode === "smart" ? "basic" : mode;
+}
+
 function normalizeToolDefinitions(tools) {
 	if (!Array.isArray(tools)) return [];
 
@@ -165,6 +175,16 @@ function normalizeToolDefinitions(tools) {
 		});
 		return result;
 	}, []);
+}
+
+function filterToolDefinitions(toolDefs, toolMode) {
+	var mode = normalizeToolMode(toolMode);
+	if (mode === "none") return [];
+	if (mode === "all") return toolDefs;
+
+	return toolDefs.filter(function (tool) {
+		return BASIC_TOOL_ALLOWLIST.has(tool.name);
+	});
 }
 
 function buildToolInstruction(toolDefs, toolChoice, parallelToolCalls) {
@@ -345,7 +365,7 @@ function parseToolCalls(raw) {
 	});
 }
 
-function validateToolsRequest(body, toolDefs) {
+function validateToolsRequest(body, normalizedToolDefs, toolDefs, toolMode) {
 	if (body.tools != null && !Array.isArray(body.tools)) {
 		return "tools field must be an array";
 	}
@@ -353,9 +373,19 @@ function validateToolsRequest(body, toolDefs) {
 	if (
 		Array.isArray(body.tools) &&
 		body.tools.length > 0 &&
-		toolDefs.length === 0
+		normalizedToolDefs.length === 0
 	) {
 		return "tools field must contain function definitions with non-empty names";
+	}
+
+	if (
+		Array.isArray(body.tools) &&
+		body.tools.length > 0 &&
+		toolDefs.length === 0
+	) {
+		var mode = normalizeToolMode(toolMode);
+		if (mode === "none") return "CHATJIMMY_TOOL_MODE=none disables all tools";
+		return "No requested tools are allowed by CHATJIMMY_TOOL_MODE=" + mode;
 	}
 
 	if (
@@ -397,7 +427,7 @@ function validateToolsRequest(body, toolDefs) {
 
 	if (!allowed) {
 		return (
-			"tool_choice references an unknown tool: " +
+			"tool_choice references an unknown or disallowed tool: " +
 			body.tool_choice.function.name
 		);
 	}
@@ -942,7 +972,7 @@ async function routeHealth(apiUrl) {
 }
 
 // ★ 核心修复：流式与非流式错误分开处理
-async function routeChat(request, debug, apiUrl) {
+async function routeChat(request, debug, apiUrl, toolMode) {
 	if (request.method !== "POST") return errResp("Method not allowed", 405);
 
 	var body;
@@ -960,8 +990,14 @@ async function routeChat(request, debug, apiUrl) {
 
 	var model = body.model || DEFAULT_MODEL;
 	var isStream = !!body.stream;
-	var toolDefs = normalizeToolDefinitions(body.tools);
-	var validationError = validateToolsRequest(body, toolDefs);
+	var normalizedToolDefs = normalizeToolDefinitions(body.tools);
+	var toolDefs = filterToolDefinitions(normalizedToolDefs, toolMode);
+	var validationError = validateToolsRequest(
+		body,
+		normalizedToolDefs,
+		toolDefs,
+		toolMode,
+	);
 
 	if (validationError) {
 		return isStream
@@ -1039,6 +1075,7 @@ export default {
 		var apiKey = (env && env.API_KEY) || "";
 		var debug = !!(env && env.DEBUG === "true");
 		var apiUrl = (env && env.CHATJIMMY_API_URL) || CHATJIMMY_API_URL;
+		var toolMode = normalizeToolMode(env && env.CHATJIMMY_TOOL_MODE);
 
 		if (request.method === "OPTIONS") {
 			return new Response(null, { status: 204, headers: CORS });
@@ -1054,7 +1091,7 @@ export default {
 		}
 
 		if (path === "/v1/chat/completions")
-			return routeChat(request, debug, apiUrl);
+			return routeChat(request, debug, apiUrl, toolMode);
 		if (path === "/v1/models") return routeModels();
 
 		return errResp("Not found", 404);
